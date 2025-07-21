@@ -425,7 +425,7 @@ def create_gradio_interface():
     return demo
 
 # Main application
-async def main():
+def main():
     """Main function to run the bot"""
     try:
         # Create application
@@ -448,48 +448,77 @@ async def main():
         ))
         application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         
-        # Start polling
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
+        # Check if we should use webhook or polling
+        webhook_url = os.environ.get('WEBHOOK_URL')
         
-        logger.info("🔥 AhamAI Bot is running! 🔥")
+        if webhook_url:
+            # Webhook mode (for production deployment like HuggingFace Spaces)
+            logger.info(f"🌐 Starting webhook mode on {webhook_url}")
+            port = int(os.environ.get('PORT', 7860))
+            application.run_webhook(
+                listen="0.0.0.0",
+                port=port,
+                url_path="webhook",
+                webhook_url=f"{webhook_url}/webhook",
+                drop_pending_updates=True
+            )
+        else:
+            # Polling mode (for development/testing)
+            logger.info("📡 Starting polling mode")
+            application.run_polling(
+                drop_pending_updates=True,  # Clear pending updates
+                allowed_updates=["message", "callback_query"]
+            )
         
-        # Keep running
-        while True:
-            await asyncio.sleep(1)
-            
     except Exception as e:
         logger.error(f"Error in main: {e}")
+        raise
 
-if __name__ == "__main__":
+def run_bot_only():
+    """Run only the bot without Gradio"""
+    main()
+
+def run_with_gradio():
+    """Run bot with Gradio interface"""
     import threading
     import time
     
     # Create and launch Gradio interface
     demo = create_gradio_interface()
     
-    # Function to run the bot
+    # Function to run the bot in a separate thread
     def run_bot():
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(main())
+            main()
         except Exception as e:
             logger.error(f"Bot error: {e}")
     
-    # Start bot in a separate thread
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    # Start bot in a separate thread (not daemon so it stays alive)
+    bot_thread = threading.Thread(target=run_bot, daemon=False)
     bot_thread.start()
     
     # Give bot time to start
-    time.sleep(2)
+    time.sleep(3)
     
     # Launch Gradio
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,
-        show_error=True,
-        quiet=True
-    )
+    try:
+        demo.launch(
+            server_name="0.0.0.0",
+            server_port=7860,
+            share=False,
+            show_error=True,
+            quiet=False
+        )
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+
+if __name__ == "__main__":
+    import sys
+    
+    # Check if we should run with or without Gradio
+    if len(sys.argv) > 1 and sys.argv[1] == "--bot-only":
+        # Run only the bot
+        run_bot_only()
+    else:
+        # Run with Gradio interface
+        run_with_gradio()
